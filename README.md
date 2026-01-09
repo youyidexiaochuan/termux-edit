@@ -1,3 +1,4 @@
+# 成功编译了。Android 安卓32位armv7 和。 64位arm64版本的微软的edit。终于可以在Termux 上跑了。
 # ![Application Icon for Edit](./assets/edit.svg) Edit
 
 A simple editor for simple needs.
