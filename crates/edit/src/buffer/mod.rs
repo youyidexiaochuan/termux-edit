@@ -125,10 +125,11 @@ struct ActiveSearch {
     /// created. When the user manually selects text, we need to
     /// refresh the [`ActiveSearch::pattern`] with it.
     selection_generation: u32,
-    /// Stores the text buffer offset in between searches.
-    next_search_offset: usize,
-    /// If we know there were no hits, we can skip searching.
-    no_matches: bool,
+    
+    /// All found matches in the buffer.
+    matches: Vec<Range<usize>>,
+    /// The index of the currently selected match in `matches`.
+    current_match_index: Option<usize>,
 }
 
 /// Options for a search operation.
@@ -1080,7 +1081,7 @@ impl TextBuffer {
     }
 
     /// Find the next occurrence of the given `pattern` and select it.
-    pub fn find_and_select(&mut self, pattern: &str, options: SearchOptions) -> apperr::Result<()> {
+    pub fn find_and_select(&mut self, pattern: &str, options: SearchOptions) -> apperr::Result<Option<(usize, usize)>> {
         if let Some(search) = &mut self.search {
             let search = search.get_mut();
             // When the search input changes we must reset the search.
@@ -1097,7 +1098,7 @@ impl TextBuffer {
         }
 
         if pattern.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         let search = match &self.search {
@@ -1109,10 +1110,8 @@ impl TextBuffer {
             }
         };
 
-        // If we previously searched through the entire document and found 0 matches,
-        // then we can avoid searching again.
-        if search.no_matches {
-            return Ok(());
+        if search.matches.is_empty() {
+            return Ok(Some((0, 0)));
         }
 
         // If the user moved the cursor since the last search, but the needle remained the same,
@@ -1120,7 +1119,10 @@ impl TextBuffer {
         let next_search_offset = match self.selection {
             Some(TextBufferSelection { beg, end }) => {
                 if self.selection_generation == search.selection_generation {
-                    search.next_search_offset
+                    // search.next_search_offset was removed.
+                    // If we have a valid selection from previous search, start after it.
+                    let p = beg.max(end);
+                    self.cursor_move_to_logical_internal(self.cursor, p).offset
                 } else {
                     self.cursor_move_to_logical_internal(self.cursor, beg.min(end)).offset
                 }
@@ -1129,7 +1131,12 @@ impl TextBuffer {
         };
 
         self.find_select_next(search, next_search_offset, true);
-        Ok(())
+        
+        if let Some(idx) = search.current_match_index {
+            Ok(Some((idx + 1, search.matches.len())))
+        } else {
+            Ok(Some((0, search.matches.len())))
+        }
     }
 
     /// Find the next occurrence of the given `pattern` and replace it with `replacement`.
@@ -1138,7 +1145,7 @@ impl TextBuffer {
         pattern: &str,
         options: SearchOptions,
         replacement: &[u8],
-    ) -> apperr::Result<()> {
+    ) -> apperr::Result<Option<(usize, usize)>> {
         // Editors traditionally replace the previous search hit, not the next possible one.
         if let (Some(search), Some(..)) = (&self.search, &self.selection) {
             let search = unsafe { &mut *search.get() };
@@ -1161,7 +1168,7 @@ impl TextBuffer {
         pattern: &str,
         options: SearchOptions,
         replacement: &[u8],
-    ) -> apperr::Result<()> {
+    ) -> apperr::Result<Option<(usize, usize)>> {
         let scratch = scratch_arena(None);
         let mut search = self.find_construct_search(pattern, options)?;
         let mut offset = 0;
@@ -1179,7 +1186,7 @@ impl TextBuffer {
             offset = self.cursor.offset;
         }
 
-        Ok(())
+        Ok(None)
     }
 
     fn find_construct_search(
@@ -1228,7 +1235,13 @@ impl TextBuffer {
         // or otherwise to the current cursor position.
 
         let text = unsafe { icu::Text::new(self)? };
-        let regex = unsafe { icu::Regex::new(&sanitized_pattern, flags, &text)? };
+        let mut regex = unsafe { icu::Regex::new(&sanitized_pattern, flags, &text)? };
+
+        let mut matches = Vec::new();
+        regex.reset(0);
+        while let Some(range) = regex.next() {
+            matches.push(range);
+        }
 
         Ok(ActiveSearch {
             pattern: pattern.to_string(),
@@ -1237,8 +1250,8 @@ impl TextBuffer {
             regex,
             buffer_generation: self.buffer.generation(),
             selection_generation: 0,
-            next_search_offset: 0,
-            no_matches: false,
+            matches,
+            current_match_index: None,
         })
     }
 
@@ -1246,25 +1259,38 @@ impl TextBuffer {
         if search.buffer_generation != self.buffer.generation() {
             unsafe { search.regex.set_text(&mut search.text, offset) };
             search.buffer_generation = self.buffer.generation();
-            search.next_search_offset = offset;
-        } else if search.next_search_offset != offset {
-            search.next_search_offset = offset;
-            search.regex.reset(offset);
-        }
-
-        let mut hit = search.regex.next();
-
-        // If we hit the end of the buffer, and we know that there's something to find,
-        // start the search again from the beginning (= wrap around).
-        if wrap && hit.is_none() && search.next_search_offset != 0 {
-            search.next_search_offset = 0;
+            
+            search.matches.clear();
             search.regex.reset(0);
-            hit = search.regex.next();
+            while let Some(range) = search.regex.next() {
+                search.matches.push(range);
+            }
+            search.current_match_index = None;
+        } 
+        
+        if search.matches.is_empty() {
+            search.current_match_index = None;
+            self.set_selection(None);
+            return;
         }
 
-        search.selection_generation = if let Some(range) = hit {
-            // Now the search offset is no more at the start of the buffer.
-            search.next_search_offset = range.end;
+        // Find match >= offset
+        let idx_res = search.matches.binary_search_by_key(&offset, |r| r.start);
+        let start_idx = match idx_res {
+             Ok(i) => i, 
+             Err(i) => i,
+        };
+        
+        let mut next_idx = None;
+        if start_idx < search.matches.len() {
+             next_idx = Some(start_idx);
+        } else if wrap {
+             next_idx = Some(0);
+        }
+
+        if let Some(idx) = next_idx {
+            search.current_match_index = Some(idx);
+            let range = search.matches[idx].clone();
 
             let beg = self.cursor_move_to_offset_internal(self.cursor, range.start);
             let end = self.cursor_move_to_offset_internal(beg, range.end);
@@ -1272,15 +1298,14 @@ impl TextBuffer {
             unsafe { self.set_cursor(end) };
             self.make_cursor_visible();
 
-            self.set_selection(Some(TextBufferSelection {
+            search.selection_generation = self.set_selection(Some(TextBufferSelection {
                 beg: beg.logical_pos,
                 end: end.logical_pos,
-            }))
+            }));
         } else {
-            // Avoid searching through the entire document again if we know there's nothing to find.
-            search.no_matches = true;
-            self.set_selection(None)
-        };
+            search.current_match_index = None;
+            self.set_selection(None);
+        }
     }
 
     fn find_parse_replacement<'a>(

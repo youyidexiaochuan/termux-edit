@@ -151,6 +151,8 @@ pub struct State {
     pub search_replacement: String,
     pub search_options: buffer::SearchOptions,
     pub search_success: bool,
+    // (current_index, total_count)
+    pub search_count: Option<(usize, usize)>,
 
     pub wants_encoding_picker: bool,
     pub wants_encoding_change: StateEncodingChange,
@@ -199,6 +201,7 @@ impl State {
             search_replacement: Default::default(),
             search_options: Default::default(),
             search_success: true,
+            search_count: None,
 
             wants_encoding_picker: false,
             encoding_picker_needle: Default::default(),

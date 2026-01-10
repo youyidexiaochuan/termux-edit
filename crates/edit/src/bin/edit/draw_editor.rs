@@ -77,7 +77,13 @@ fn draw_search(ctx: &mut Context, state: &mut State) {
         {
             {
                 ctx.table_next_row();
-                ctx.label("label", loc(LocId::SearchNeedleLabel));
+                
+                let label_text = if let Some((idx, total)) = state.search_count {
+                    format!("{} ({}/{})", loc(LocId::SearchNeedleLabel), idx, total)
+                } else {
+                    loc(LocId::SearchNeedleLabel).to_string()
+                };
+                ctx.label("label", &label_text);
 
                 if ctx.editline("needle", &mut state.search_needle) {
                     action = Some(SearchAction::Search);
@@ -174,7 +180,7 @@ pub fn search_execute(ctx: &mut Context, state: &mut State, action: SearchAction
         return;
     };
 
-    state.search_success = match action {
+    let result = match action {
         SearchAction::Search => {
             doc.buffer.borrow_mut().find_and_select(&state.search_needle, state.search_options)
         }
@@ -188,8 +194,18 @@ pub fn search_execute(ctx: &mut Context, state: &mut State, action: SearchAction
             state.search_options,
             state.search_replacement.as_bytes(),
         ),
+    };
+
+    match result {
+        Ok(count) => {
+            state.search_success = true;
+            state.search_count = count;
+        }
+        Err(_) => {
+            state.search_success = false;
+            state.search_count = None;
+        }
     }
-    .is_ok();
 
     ctx.needs_rerender();
 }
