@@ -16,7 +16,7 @@
   总结：
    * 如果您只是想找一段普通的文本（比如找个单词、找个标点），不要点钩。
    * 如果您需要高级匹配（比如“找所有以A开头的单词”、“找所有邮箱地址”），才需要点钩。
- 关于正则表达式如何使用，请研究https://www.runoob.com/regexp/regexp-intro.html或者问AI
+ 关于正则表达式如何使用，请研究https://www.runoob.com/regexp/regexp-intro.html 或者问AI
 
 
 # ![Application Icon for Edit](./assets/edit.svg) Edit
