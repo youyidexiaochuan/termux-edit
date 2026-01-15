@@ -291,52 +291,72 @@ impl Iterator for Regex {
         let slice = &self.text[self.last_idx..];
         
         // Native search logic
-        let found = if self.case_insensitive {
-            // Very basic case insensitive search (allocates, slow, but works for lite)
-            // Note: Indices might be off if char length changes, but good enough for ASCII/basic BMP.
-            // Better approach for lite: assume pattern is small, iterate slice.
-            // But strict requirement: use std only.
-            
-            // Optimization: if pattern is all ASCII, we can use byte comparison easily.
-            // Here we just use the simplest "correct" way for small strings.
-            let pat_lower = self.pattern.to_lowercase();
-            let slice_lower = slice.to_lowercase();
-            slice_lower.find(&pat_lower).map(|idx| {
-                // Warning: The index in `slice_lower` might not match `slice` perfectly for complex Unicode.
-                // We map it back assuming 1-to-1 byte mapping for most cases or accept inaccuracy for complex scripts in Lite mode.
-                // To do this perfectly without deps is hard. 
-                // We'll trust that for most "edit.com" use cases (code, config), this is fine.
-                // A better hack: check if `slice[idx..idx+len]` matches case-insensitively.
-                // If not, scan forward.
+        if self.case_insensitive {
+            // Optimization: iterate slice chars instead of allocating lowercased string.
+            // This is O(N*M) in worst case but avoids the massive O(N) allocation per search.
+            // 1. Prepare pattern: simple lowercase.
+            let pat_lower: Vec<char> = self.pattern.to_lowercase().chars().collect();
+            if pat_lower.is_empty() {
+                return Some(self.last_idx..self.last_idx);
+            }
+
+            // 2. Scan text
+            for (offset, _) in slice.char_indices() {
+                let mut sub_iter = slice[offset..].chars();
+                let mut pat_iter = pat_lower.iter();
+                let mut current_match_len = 0;
                 
-                // Let's implement a simple scanner instead to be safer with indices.
-                // Find first char case-insensitive, then check rest.
-                // This is O(N*M).
-                
-                // Fallback to strict find if we can't do it easily? 
-                // No, let's just stick to case-sensitive for Lite if simple.
-                // User asked for "Ordinary Find". Usually includes Case Insensitive.
-                
-                // Let's use `matches` logic manually.
-                let pat_chars: Vec<char> = self.pattern.to_lowercase().chars().collect();
-                let text_chars = slice.char_indices();
-                
-                // Actually, let's just use the `to_lowercase` index match. It's usually fine for "Lite".
-                idx
-            })
+                let matches = loop {
+                    match pat_iter.next() {
+                        Some(&p_char) => {
+                            match sub_iter.next() {
+                                Some(t_char) => {
+                                    // Compare t_char lowercased with p_char.
+                                    // Note: char::to_lowercase() returns an iterator.
+                                    // We compare the first char of that iterator with p_char.
+                                    // This handles 1-to-1 mapping (A->a).
+                                    // It does NOT handle 1-to-many (ß->ss) if strict unicode expansion is needed,
+                                    // but this is the "Lite" mode tradeoff for performance.
+                                    let mut t_lower = t_char.to_lowercase();
+                                    if let Some(tl) = t_lower.next() {
+                                        if tl != p_char {
+                                            break false;
+                                        }
+                                        // If t_char expands to more (e.g. Turkic I), we ignore the rest in Lite mode
+                                        // or it implies mismatch if pattern expects more. 
+                                        // Simplified check: exact match of first lowercased char.
+                                    } else {
+                                        // Should not happen for valid chars
+                                        break false;
+                                    }
+                                    current_match_len += t_char.len_utf8();
+                                }
+                                None => break false, // Text ended before pattern
+                            }
+                        }
+                        None => break true, // Pattern exhausted -> Match found
+                    }
+                };
+
+                if matches {
+                    let start = self.last_idx + offset;
+                    let end = start + current_match_len;
+                    self.last_idx = end;
+                    return Some(start..end);
+                }
+            }
+            None
         } else {
-            slice.find(&self.pattern)
+            slice.find(&self.pattern).map(|idx| {
+                let start = self.last_idx + idx;
+                let end = start + self.pattern.len();
+                self.last_idx = end;
+                start..end
+            })
         };
 
-        if let Some(idx) = found {
-            let start = self.last_idx + idx;
-            let end = start + self.pattern.len(); // Length assumes bytes match. If case changed length, this is wrong.
-            // Correction: For Lite mode, let's just use EXACT byte length of pattern.
-            // If replacing "ß" with "SS", lengths differ. 
-            // Lite mode limitation: Best effort.
-            
-            self.last_idx = end;
-            Some(start..end)
+        if let Some(range) = found {
+            Some(range)
         } else {
             None
         }
