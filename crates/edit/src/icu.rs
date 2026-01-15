@@ -347,18 +347,15 @@ impl Iterator for Regex {
             }
             None
         } else {
-            slice.find(&self.pattern).map(|idx| {
-                let start = self.last_idx + idx;
-                let end = start + self.pattern.len();
-                self.last_idx = end;
-                start..end
-            })
-        };
-
-        if let Some(range) = found {
-            Some(range)
-        } else {
-            None
+            match slice.find(&self.pattern) {
+                Some(idx) => {
+                    let start = self.last_idx + idx;
+                    let end = start + self.pattern.len();
+                    self.last_idx = end;
+                    Some(start..end)
+                }
+                None => None,
+            }
         }
     }
 }
