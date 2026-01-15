@@ -247,6 +247,7 @@ pub struct Regex {
     text: String,
     last_idx: usize,
     case_insensitive: bool,
+    whole_word: bool,
 }
 
 #[cfg(not(feature = "regex"))]
@@ -256,11 +257,22 @@ impl Regex {
     pub const LITERAL: i32 = 4;   // Always literal in lite
 
     pub unsafe fn new(pattern: &str, flags: i32, text: &Text) -> apperr::Result<Self> {
+        let mut p = pattern;
+        let mut whole_word = false;
+
+        // Detect if the pattern was wrapped in \b by the buffer logic for whole word search.
+        // Since Lite mode doesn't support regex, we strip it and handle logic manually.
+        if p.starts_with(r"\b") && p.ends_with(r"\b") && p.len() >= 4 {
+             p = &p[2..p.len()-2];
+             whole_word = true;
+        }
+
         Ok(Self {
-            pattern: pattern.to_string(),
+            pattern: p.to_string(),
             text: text.content.clone(),
             last_idx: 0,
             case_insensitive: (flags & Self::CASE_INSENSITIVE) != 0,
+            whole_word,
         })
     }
 
@@ -277,6 +289,10 @@ impl Regex {
     pub fn group_count(&mut self) -> i32 { 0 }
 
     pub fn group(&mut self, _group: i32) -> Option<Range<usize>> { None }
+    
+    fn is_word_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
 }
 
 #[cfg(not(feature = "regex"))]
@@ -312,21 +328,12 @@ impl Iterator for Regex {
                             match sub_iter.next() {
                                 Some(t_char) => {
                                     // Compare t_char lowercased with p_char.
-                                    // Note: char::to_lowercase() returns an iterator.
-                                    // We compare the first char of that iterator with p_char.
-                                    // This handles 1-to-1 mapping (A->a).
-                                    // It does NOT handle 1-to-many (ß->ss) if strict unicode expansion is needed,
-                                    // but this is the "Lite" mode tradeoff for performance.
                                     let mut t_lower = t_char.to_lowercase();
                                     if let Some(tl) = t_lower.next() {
                                         if tl != p_char {
                                             break false;
                                         }
-                                        // If t_char expands to more (e.g. Turkic I), we ignore the rest in Lite mode
-                                        // or it implies mismatch if pattern expects more. 
-                                        // Simplified check: exact match of first lowercased char.
                                     } else {
-                                        // Should not happen for valid chars
                                         break false;
                                     }
                                     current_match_len += t_char.len_utf8();
@@ -341,20 +348,58 @@ impl Iterator for Regex {
                 if matches {
                     let start = self.last_idx + offset;
                     let end = start + current_match_len;
+                    
+                    // Whole word check
+                    if self.whole_word {
+                        let prev_char = if start > 0 {
+                            self.text[..start].chars().next_back()
+                        } else {
+                            None
+                        };
+                        let next_char = self.text[end..].chars().next();
+                        
+                        if prev_char.map_or(false, Self::is_word_char) || next_char.map_or(false, Self::is_word_char) {
+                            continue; // Not a whole word match, skip
+                        }
+                    }
+
                     self.last_idx = end;
                     return Some(start..end);
                 }
             }
             None
         } else {
-            match slice.find(&self.pattern) {
-                Some(idx) => {
-                    let start = self.last_idx + idx;
-                    let end = start + self.pattern.len();
-                    self.last_idx = end;
-                    Some(start..end)
+            // Case sensitive search
+            let mut search_offset = 0;
+            loop {
+                let sub_slice = &slice[search_offset..];
+                match sub_slice.find(&self.pattern) {
+                    Some(idx) => {
+                        let match_start_in_slice = search_offset + idx;
+                        let start = self.last_idx + match_start_in_slice;
+                        let end = start + self.pattern.len();
+                        
+                        // Whole word check
+                        if self.whole_word {
+                            let prev_char = if start > 0 {
+                                self.text[..start].chars().next_back()
+                            } else {
+                                None
+                            };
+                            let next_char = self.text[end..].chars().next();
+                            
+                            if prev_char.map_or(false, Self::is_word_char) || next_char.map_or(false, Self::is_word_char) {
+                                // Not a whole word, continue searching in the rest of the slice
+                                search_offset += idx + 1; // Move past this partial match
+                                continue;
+                            }
+                        }
+
+                        self.last_idx = end;
+                        return Some(start..end);
+                    }
+                    None => return None,
                 }
-                None => None,
             }
         }
     }
