@@ -6,6 +6,33 @@ in the Termux environment on Android.
 Fixes search & replace by removing ICU dependency.
 Adds search statistics and lightweight builds.
 
+Two build variants are provided:
+
+- **Full build (Regex enabled)**  
+  Uses Rust's native regex engine to fully replace the original ICU-based
+  search and replace functionality.  
+  Slightly larger binary size, but offers powerful pattern matching.
+
+- **Lightweight build (No regex)**  
+  Implements plain text search and replace without linking to a regex library.  
+  Much smaller binary size and covers around 80–90% of typical editing needs.
+
+If you mainly search for ordinary text (words, symbols, code snippets),
+the lightweight build is often the better choice.
+
+提供两个构建版本：
+
+- **完整版本（支持正则）**  
+  使用 Rust 原生正则库重写搜索与替换功能，完全替代原先依赖 ICU 的实现。  
+  体积略大，但功能更强，适合高级匹配需求。
+
+- **精简版本（不含正则）**  
+  仅实现普通文本的查找与替换，不依赖正则库。  
+  可执行文件体积显著更小，但已覆盖约 80%～90% 的日常编辑需求。
+
+如果你只是查找普通文本（单词、符号、代码片段等），
+精简版本通常是更好的选择。
+
 
 # 成功编译了。Android 安卓32位armv7 和。 64位arm64版本的微软的edit。终于可以在Termux 上跑了。但是但是有缺陷，因为安卓系统因为权限问题调用不到ICU库， International Components for Unicode（Unicode 国际组件）所以搜索相关功能无法使用。又但是，用Rust原生的正则库写了搜索替换功能，删除了对ICU库的引用，现在可以独立实现搜索功能了，但是缺点是体积膨胀了5倍多，但是也是很迷你的，（搜索下一个可以用F3功能键，完美复刻以前dos版edit.com的功能)，适用Termux，增加了小型化版本，去掉了正则查找功能，只有普通查找替换功能，体积小巧，功能够用，喜欢精简功能的朋友适用。
 
