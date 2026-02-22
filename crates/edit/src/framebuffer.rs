@@ -114,6 +114,9 @@ pub struct Framebuffer {
     contrast_colors: [Cell<(StraightRgba, StraightRgba)>; CACHE_TABLE_SIZE],
     background_fill: StraightRgba,
     foreground_fill: StraightRgba,
+    /// When true, uses 256-color mode instead of true color (24-bit RGB).
+    /// This is needed for compatibility with some terminal environments like Termux over SSH.
+    disable_true_color: bool,
 }
 
 impl Framebuffer {
@@ -132,7 +135,14 @@ impl Framebuffer {
                 CACHE_TABLE_SIZE],
             background_fill: DEFAULT_THEME[IndexedColor::Background as usize],
             foreground_fill: DEFAULT_THEME[IndexedColor::Foreground as usize],
+            disable_true_color: false,
         }
+    }
+
+    /// Disables true color (24-bit RGB) and uses 256-color mode instead.
+    /// This is useful for compatibility with environments that have limited terminal support.
+    pub fn set_disable_true_color(&mut self, disable: bool) {
+        self.disable_true_color = disable;
     }
 
     /// Sets the base color palette.
@@ -587,7 +597,22 @@ impl Framebuffer {
         let r = color.red();
         let g = color.green();
         let b = color.blue();
-        _ = write!(dst, "\x1b[{typ}8;2;{r};{g};{b}m");
+
+        if self.disable_true_color {
+            // Use 256-color approximation instead of true color.
+            // The 256-color palette consists of:
+            // - 0-15: Standard colors (already matched by indexed_colors if used)
+            // - 16-231: 6x6x6 RGB cube (216 colors)
+            // - 232-255: Grayscale (24 shades)
+            // We use the RGB cube for most colors.
+            let r_index = (r as u16 * 6 / 256).min(5);
+            let g_index = (g as u16 * 6 / 256).min(5);
+            let b_index = (b as u16 * 6 / 256).min(5);
+            let color_index = 16 + r_index * 36 + g_index * 6 + b_index;
+            _ = write!(dst, "\x1b[{typ}8;5;{color_index}m");
+        } else {
+            _ = write!(dst, "\x1b[{typ}8;2;{r};{g};{b}m");
+        }
     }
 }
 

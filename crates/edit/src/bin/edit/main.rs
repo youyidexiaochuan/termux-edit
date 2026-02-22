@@ -80,6 +80,11 @@ fn run() -> apperr::Result<()> {
     let mut input_parser = input::Parser::new();
     let mut tui = Tui::new()?;
 
+    // Detect Termux environment and disable true color for compatibility
+    if std::env::var("TERMUX_VERSION").is_ok() {
+        tui.set_disable_true_color(true);
+    }
+
     let _restore = setup_terminal(&mut tui, &mut state, &mut vt_parser);
 
     state.menubar_color_bg = tui.indexed(IndexedColor::Background).oklab_blend(tui.indexed_alpha(

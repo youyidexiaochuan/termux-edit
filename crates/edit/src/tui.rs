@@ -432,6 +432,12 @@ impl Tui {
         self.framebuffer.set_indexed_colors(colors);
     }
 
+    /// Disable true color (24-bit RGB) and use 256-color mode instead.
+    /// Useful for compatibility with terminals that have limited true color support.
+    pub fn set_disable_true_color(&mut self, disable: bool) {
+        self.framebuffer.set_disable_true_color(disable);
+    }
+
     /// Set up translations for Ctrl/Alt/Shift modifiers.
     pub fn setup_modifier_translations(&mut self, translations: ModifierTranslations) {
         self.modifier_translations = translations;
